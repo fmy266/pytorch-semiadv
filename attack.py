@@ -4,6 +4,16 @@ from torchvision import transforms, datasets
 from train_substitute_model import create_model
 import os
 
+def get_accuracy(model, dataloader, device):
+    model.to(device)
+    correct_num, num = 0, 0
+    for data, label in dataloader:
+        data, label = data.to(device), label.to(device)
+        correct_num += (model(data).max(dim = 1)[1] == label).sum().item()
+        num += label.size()[0]
+    return correct_num / num * 100.
+
+
 def get_drop_hook(prob):
     def drop_hook_func(layer, input, output):  # 0.3 prob means 30% value to be 0
         return output * (torch.rand(output.size()[1]) >= prob).view(1, -1, 1, 1)
@@ -36,7 +46,7 @@ def get_adversary(attack_method, model, epsilon, params, is_targeted=False):
     if attack_method == "FGSM":
         return attacks.GradientSignAttack(predict=model, loss_fn=loss_function,
                                           clip_min=params["clip_min"], clip_max=params["clip_max"],
-                                          targeted=is_targeted)
+                                          targeted=is_targeted, eps=0.15)
     elif attack_method == "BIM_L2":
         return attacks.L2BasicIterativeAttack(predict=model, loss_fn=loss_function,
                                               clip_min=params["clip_min"], clip_max=params["clip_max"],
@@ -76,7 +86,7 @@ def get_dataloader(dataset_name):
     if dataset_name in ["cifar10", "cifar100"]:
         transform = transforms.Compose([
             transforms.ToTensor(),
-            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+            # transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
         ])
         if dataset_name == "cifar10":
             dataset = datasets.CIFAR10('..//data', train=False,
@@ -89,7 +99,7 @@ def get_dataloader(dataset_name):
     elif dataset_name in ["mnist", "fashionmnist"]:
         transform = transforms.Compose([
             transforms.ToTensor(),
-            transforms.Normalize((0.1307,), (0.3081,))
+            # transforms.Normalize((0.1307,), (0.3081,))
         ])
         if dataset_name == "mnist":
             dataset = datasets.MNIST('..//data', train=False,
@@ -101,12 +111,11 @@ def get_dataloader(dataset_name):
 
     return loader
 
-
 def attack(black_model, substitute_model, save_params, attack_params):
     # without drop
     black_model = black_model.to(attack_params["device"])
     substitute_model = substitute_model.to(attack_params["device"])
-    for attack_method in ["FGSM", "BIM_L2", "BIM_Linf", "PGD_L2", "PGD_Linf", "CW", "Momen_L2", "Monen_Linf"]:
+    for attack_method in ["FGSM", "BIM_L2", "BIM_Linf", "PGD_L2", "PGD_Linf", "Momen_L2", "Monen_Linf"]: # "CW",
         # untargeted attack
         adversary = get_adversary(attack_method, substitute_model, save_params["epsilon"], attack_params)
         dataloader = get_dataloader(save_params["dataset_name"])
@@ -156,7 +165,7 @@ def attack(black_model, substitute_model, save_params, attack_params):
             if name in layer_ls:
                 layer.register_forward_hook(get_drop_hook(0.5))
 
-    for attack_method in ["FGSM", "BIM_L2", "BIM_Linf", "PGD_L2", "PGD_Linf", "CW", "Momen_L2", "Monen_Linf"]:
+    for attack_method in ["FGSM", "BIM_L2", "BIM_Linf", "PGD_L2", "PGD_Linf", "Momen_L2", "Monen_Linf"]: # "CW",
         adversary = get_adversary(attack_method, substitute_model, save_params["epsilon"], attack_params)
         dataloader = get_dataloader(save_params["dataset_name"])
         mis_num, num = 0, 0
@@ -195,23 +204,28 @@ def attack(black_model, substitute_model, save_params, attack_params):
                     attack_method=attack_method, constraint=constraint, is_drop=1, ASR=mis_num / num * 100
                 ))
 
-
 def main():
+
+    #     "cifar10": {"clip_max": (1 - 0.45) / 0.23, "clip_min": (0 - 0.45) / 0.23, "epsilon": 0.017,
+    #                 "device": torch.device("cuda:1")},
+    #     "cifar100": {"clip_max": (1 - 0.45) / 0.23, "clip_min": (0 - 0.45) / 0.23, "epsilon": 0.017,
+    #                  "device": torch.device("cuda:1")},
+
     attack_params = {
-        "cifar10": {"clip_max": (1 - 0.45) / 0.23, "clip_min": (0 - 0.45) / 0.23, "epsilon": 0.017,
-                    "device": torch.device("cuda:1")},
-        "cifar100": {"clip_max": (1 - 0.45) / 0.23, "clip_min": (0 - 0.45) / 0.23, "epsilon": 0.017,
+        "cifar10": {"clip_max": 0., "clip_min": 1., "epsilon": 0.004,
+                    "device": torch.device("cuda:0")},
+        "cifar100": {"clip_max": 0., "clip_min": 1., "epsilon": 0.004,
                      "device": torch.device("cuda:1")},
         "mnist": {"clip_max": (1 - 0.13) / 0.31, "clip_min": (0 - 0.13) / 0.31, "epsilon": 0.013,
-                  "device": torch.device("cuda:1")},
+                      "device": torch.device("cuda:1")},
         "fashionmnist": {"clip_max": (1 - 0.13) / 0.31, "clip_min": (0 - 0.13) / 0.31, "epsilon": 0.013,
-                         "device": torch.device("cuda:1")}
+                             "device": torch.device("cuda:1")}
     }
 
-    black_model_name_ls = ["mobilenet"] # , "googlenet", "preactresnet"
-    substitute_model_name_ls = ["wideresnet"] # , "efficientnet"
-    dataset_name_ls = ["cifar10", ] # "mnist", "fashionmnist", "cifar100"
-    labeled_data_num_ls = [1600] # 100, 200, 400, 800,
+    black_model_name_ls = ["mobilenet", "googlenet", "preactresnet"] # , "googlenet"
+    substitute_model_name_ls = ["wideresnet", "efficientnet"] #
+    dataset_name_ls = ["mnist", "fashionmnist", "cifar10", "cifar100"] #
+    labeled_data_num_ls = [1600, 800, 400, 200, 100] # 100, 200, 400, 800,
     epsilon_ls = [1., 2., 4., 8.] #
 
     for black_model_name in black_model_name_ls:
@@ -239,7 +253,17 @@ def main():
                         black_model_path = os.path.join("black_model", black_model_path)
                         black_model.load_state_dict(torch.load(black_model_path), False)
 
+                        # attack
                         attack(black_model, substitute_model, save_params, attack_params[save_params["dataset_name"]])
+
+                        # test accuracy
+                        # acc = get_accuracy(substitute_model, get_dataloader(dataset_name),
+                        #              attack_params[save_params["dataset_name"]]["device"])
+                        # print("{model_name}\t{black_model_name}\t{dataset_name}\t{label_num}\t{acc:.2f}".format(
+                        #     model_name = substitute_model_name,
+                        #     black_model_name = black_model_name, dataset_name = dataset_name,
+                        #     label_num = labeled_data_num, acc = acc
+                        # ))
 
 
 if __name__ == '__main__':
