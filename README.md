@@ -25,6 +25,7 @@ The default setting is as follows:
   + black model: MobileNet,
   + sustitute model: WideResNet-28,
   + default attack method: PGD with our method,
+  + dataset: CIFAR-10,
   + query number (labeled data): 1600.
   
 More defulat setting or info refers to source code.
