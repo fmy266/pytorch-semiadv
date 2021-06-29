@@ -16,13 +16,17 @@ python train_substitute_model.py
 python attack.py
 ```
 The train_black_model.py contains the code of training a black-box model.
+
 The train_substitute_model.py contains the code of training a substitute model of the black-box model.
+
 The attack.py contains the code of implementing black-box attack by using the sustitute model against the black-box model.
+
 The default setting is as follows:
-  black model: MobileNet,
-  sustitute model: WideResNet-28,
-  default attack method: PGD with our method,
-  query number (labeled data): 1600.
+  + black model: MobileNet,
+  + sustitute model: WideResNet-28,
+  + default attack method: PGD with our method,
+  + query number (labeled data): 1600.
+  
 More defulat setting or info refers to source code.
 
 ## Training black-box model
