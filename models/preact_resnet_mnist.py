@@ -94,25 +94,5 @@ class PreActResNet(nn.Module):
         return out
 
 
-def PreActResNet18():
-    return PreActResNet(PreActBlock, [2,2,2,2])
-
-def PreActResNet34():
-    return PreActResNet(PreActBlock, [3,4,6,3])
-
-def PreActResNet50():
-    return PreActResNet(PreActBottleneck, [3,4,6,3])
-
-def PreActResNet101():
-    return PreActResNet(PreActBottleneck, [3,4,23,3])
-
-def PreActResNet152():
-    return PreActResNet(PreActBottleneck, [3,8,36,3])
-
-
-def test():
-    net = PreActResNet18()
-    y = net((torch.randn(1,3,32,32)))
-    print(y.size())
-
-# test()
+def PreActResNet18(num_classes = 10):
+    return PreActResNet(PreActBlock, [2,2,2,2], num_classes)

@@ -34,10 +34,41 @@ def create_model(param_dict, ema=False):
 
     return model
 
+def prepare_data(dataset_name, labeled_num):
+    if dataset_name == "cifar10":
+        from dataset import cifar10 as dataset
+        transform_train = transforms.Compose([
+            transforms.ToTensor(), transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+            ])
+        train_labeled_set, train_unlabeled_set, test_set = dataset.get_cifar10('../data', labeled_num,
+                                                                                  transform_train=transform_train,
+                                                                                  transform_val=transform_train)
+    elif dataset_name == "cifar100":
+        from dataset import cifar100 as dataset
+        transform_train = transforms.Compose([
+            transforms.ToTensor(), transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+            ])
+        train_labeled_set, train_unlabeled_set, test_set = dataset.get_cifar100('../data', labeled_num,
+                                                                                   transform_train=transform_train,
+                                                                                   transform_val=transform_train)
+    elif dataset_name == "mnist":
+        from dataset import mnist as dataset
+        transform_train = transforms.Compose([
+            transforms.Normalize((0.1307,), (0.3081,))
+        ])
+        train_labeled_set, train_unlabeled_set, test_set = dataset.get_mnist('../data', labeled_num,
+                                                                         transform_train=transform_train)
+    elif dataset_name == "fashionmnist":
+        from dataset import fashionmnist as dataset
+        transform_train = transforms.Compose([
+            transforms.Normalize((0.1307,), (0.3081,))
+        ])
+        train_labeled_set, train_unlabeled_set, test_set = dataset.get_fashionmnist('../data', labeled_num,
+                                                                         transform_train=transform_train)
+    return train_labeled_set, train_unlabeled_set, test_set
 
 def main(param_dict, black_model, labeled_num):
     best_acc = 0.
-
     param_dict["output_dir"] = "./substitute_model_res/{}_{}_{}_{}".format(param_dict["dataset_name"],
                                                                            param_dict["substitute_model"],
                                                                            param_dict["black_model"], labeled_num)
@@ -45,72 +76,23 @@ def main(param_dict, black_model, labeled_num):
     if not os.path.isdir(param_dict["output_dir"]):
         mkdir_p(param_dict["output_dir"])
 
-    # Data
-    if param_dict["dataset_name"] == "cifar10":
-        from dataset import cifar10 as dataset
-        transform_train = transforms.Compose([
-            dataset.RandomPadandCrop(32),
-            dataset.RandomFlip(),
-            dataset.ToTensor()])
-        transform_val = transforms.Compose([
-            dataset.ToTensor()])
-        train_labeled_set, train_unlabeled_set, _, test_set = dataset.get_cifar10('../data', labeled_num,
-                                                                                  transform_train=transform_train,
-                                                                                  transform_val=transform_val)
-    elif param_dict["dataset_name"] == "cifar100":
-        from dataset import cifar100 as dataset
-        transform_train = transforms.Compose([
-            dataset.RandomPadandCrop(32),
-            dataset.RandomFlip(),
-            dataset.ToTensor()])
-        transform_val = transforms.Compose([
-            dataset.ToTensor()])
-        train_labeled_set, train_unlabeled_set, _, test_set = dataset.get_cifar100('../data', labeled_num,
-                                                                                   transform_train=transform_train,
-                                                                                   transform_val=transform_val)
-    elif param_dict["dataset_name"] == "mnist":
-        from dataset import mnist as dataset
-        transform_train = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.1307,), (0.3081,))
-        ])
-        train_labeled_set, train_unlabeled_set, _, _ = dataset.get_mnist('../data', labeled_num,
-                                                                         transform_train=transform_train,
-                                                                         transform_val=transform_train)
-        test_set = torchvision.datasets.MNIST("../data", train=False, transform=transform_train)
-
-    elif param_dict["dataset_name"] == "fashionmnist":
-        from dataset import fashionmnist as dataset
-        transform_train = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.1307,), (0.3081,))
-        ])
-        train_labeled_set, train_unlabeled_set, _, _ = dataset.get_fashionmnist('../data', labeled_num,
-                                                                                transform_train=transform_train,
-                                                                                transform_val=transform_train)
-        test_set = torchvision.datasets.FashionMNIST("../data", train=False, transform=transform_train)
-
+    train_labeled_set, train_unlabeled_set, test_loader = prepare_data(param_dict["dataset_name"], labeled_num)
     labeled_trainloader = torch.utils.data.DataLoader(train_labeled_set, batch_size=param_dict['batch_size'],
                                                       shuffle=True, num_workers=4, drop_last=True)
     unlabeled_trainloader = torch.utils.data.DataLoader(train_unlabeled_set, batch_size=param_dict['batch_size'],
                                                         shuffle=True, num_workers=4, drop_last=True)
-    test_loader = torch.utils.data.DataLoader(test_set, batch_size=param_dict['batch_size'], shuffle=False,
-                                              num_workers=4)
-
     # Model
     model = create_model(param_dict)
     ema_model = create_model(param_dict, ema=True)
-
     cudnn.benchmark = True
 
     # loss and optimizer
     train_criterion = SemiLoss()
-    criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=param_dict['lr'])
     ema_optimizer = WeightEMA(model, ema_model, alpha=param_dict['ema_decay'])
 
     black_model.eval()
-    # Train and val
+
     with open(os.path.join(param_dict["output_dir"], "log.out"), "a+") as f:
         f.write(time.strftime("%Y/%m/%d %H:%M:%S") + "\n")
 
@@ -118,7 +100,7 @@ def main(param_dict, black_model, labeled_num):
 
         train(param_dict, labeled_trainloader, unlabeled_trainloader, model, optimizer, ema_optimizer, train_criterion,
               epoch, black_model)
-        test_acc = validate(param_dict, test_loader, ema_model, criterion, epoch, mode='Test Stats')
+        test_acc = validate(param_dict, test_loader, model)
 
         # append logger file
         with open(os.path.join(param_dict["output_dir"], "log.out"), "a+") as f:
@@ -222,15 +204,13 @@ def train(param_dict, labeled_trainloader, unlabeled_trainloader, model, optimiz
         ema_optimizer.step()
 
 
-def validate(param_dict, valloader, model, criterion, epoch, mode):
-    # switch to evaluate mode
+def validate(param_dict, loader, model):
     model.eval()
     num, correct_num = 0, 0
 
     with torch.no_grad():
-        for batch_idx, (inputs, targets) in enumerate(valloader):
+        for inputs, targets in loader:
             inputs, targets = inputs.to(param_dict["device"]), targets.to(param_dict["device"])
-            # compute output
             outputs = model(inputs)
             correct_num += (outputs.max(dim=1)[1] == targets).sum().item()
             num += targets.size()[0]
@@ -304,84 +284,14 @@ def interleave(xy, batch):
 
 
 if __name__ == '__main__':
-    print("start")
-    # dataset : mnist, fashionmnist, cifar10, cifar100
-    # substitute model: wideresnet, efficientnet
-    # batch_size need to less than labeled data number
-    # epoch, batch_size,
-#######################################################################################################
-    # 需要更改device, dataset_name, substitute_model
-    param_dict = {"lr":0.004, "device":torch.device('cuda:0'), "train_iteration":256,
-                   "alpha":0.75, "lambda_u":75, "T":0.5, "ema_decay":0.999,
-                   "dataset_name":"mnist", "substitute_model" : "efficientnet", # efficientnet wideresnet
-                  "black_model":"mobilenet"}
-    param_dict["epoch"] = 100 if param_dict["dataset_name"] in ["cifar10", "cifar100"] else 20
 
-    if param_dict["dataset_name"] in ["cifar10", "cifar100"]:
-        import models.mobilenet as BlackModel
-    else:
-        import models.mobilenet_mnist as BlackModel
-    if param_dict["dataset_name"] == "cifar100":
-        black_model = BlackModel.MobileNet(num_classes=100).to(param_dict["device"])
-    else:
-        black_model = BlackModel.MobileNet(num_classes=10).to(param_dict["device"])
+    import models.mobilenet as BlackModel
+    param_dict = {"lr":0.004, "device":torch.device('cuda:0'), "train_iteration":1024,
+                   "alpha":0.75, "lambda_u":75, "T":0.5, "ema_decay":0.999,
+                   "dataset_name":"cifar10", "substitute_model" : "wideresnet",
+                  "black_model":"mobilenet", "epoch":200, "batch_size":256}
+
+    black_model = BlackModel.MobileNet(num_classes=10).to(param_dict["device"])
     black_model.load_state_dict(torch.load("black_model/mobilenet_{}.p".format(param_dict["dataset_name"]))["net"])
     black_model.eval()
-
-    for labeled_data_num in [100, 200, 400, 800, 1600]: # 100, 200, 400, 800, 1600
-        if labeled_data_num <= 100:
-            param_dict["batch_size"] = 64
-        else:
-            param_dict["batch_size"] = 128
-        main(param_dict, black_model, labeled_data_num)
-
-    #######################################################################################################
-
-    param_dict = {"lr":0.002, "device":torch.device('cuda:1'), "train_iteration":256,
-                   "alpha":0.75, "lambda_u":75, "T":0.5, "ema_decay":0.999,
-                   "dataset_name":"mnist", "substitute_model" : "efficientnet", # wideresnet,efficientnet
-                  "black_model":"googlenet"} # cifar10 cifar100 mnist fashionmnist
-    param_dict["epoch"] = 100 if param_dict["dataset_name"] in ["cifar10", "cifar100"] else 20
-    if param_dict["dataset_name"] in ["cifar10", "cifar100"]:
-        import models.googlenet as BlackModel
-    else:
-        import models.googlenet_mnist as BlackModel
-    if param_dict["dataset_name"] == "cifar100":
-        black_model = BlackModel.GoogLeNet(num_classes=100).to(param_dict["device"])
-    else:
-        black_model = BlackModel.GoogLeNet(num_classes=10).to(param_dict["device"])
-    black_model.load_state_dict(torch.load("black_model/googlenet_{}.p".format(param_dict["dataset_name"]))["net"])
-    black_model.eval()
-
-    for labeled_data_num in [100, 200, 400, 800, 1600]:
-        if labeled_data_num <= 100:
-            param_dict["batch_size"] = 64
-        else:
-            param_dict["batch_size"] = 128
-        main(param_dict, black_model, labeled_data_num)
-
-    #######################################################################################################
-
-    param_dict = {"lr":0.002, "device":torch.device('cuda:1'), "train_iteration":256,
-                   "alpha":0.75, "lambda_u":75, "T":0.5, "ema_decay":0.999,
-                   "dataset_name":"cifar10", "substitute_model" : "efficientnet", # wideresnet,efficientnet
-                  "black_model":"preactresnet"}
-    param_dict["epoch"] = 100 if param_dict["dataset_name"] in ["cifar10", "cifar100"] else 20
-
-    if param_dict["dataset_name"] in ["cifar10", "cifar100"]:
-        import models.preact_resnet as BlackModel
-    else:
-        import models.preact_resnet_mnist as BlackModel
-    if param_dict["dataset_name"] == "cifar100":
-        black_model = BlackModel.PreActResNet18(num_classes=100).to(param_dict["device"])
-    else:
-        black_model = BlackModel.PreActResNet18(num_classes=10).to(param_dict["device"])
-    black_model.load_state_dict(torch.load("black_model/preactresnet_{}.p".format(param_dict["dataset_name"]))["net"])
-    black_model.eval()
-
-    for labeled_data_num in [100, 200, 400, 800, 1600]:
-        if labeled_data_num <= 100:
-            param_dict["batch_size"] = 64
-        else:
-            param_dict["batch_size"] = 128
-        main(param_dict, black_model, labeled_data_num)
+    main(param_dict, black_model, 1600)
